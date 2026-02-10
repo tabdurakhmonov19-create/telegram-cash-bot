@@ -29,6 +29,15 @@ CREATE TABLE IF NOT EXISTS history (
 );
 """)
 
+# yangi category column qo‘shamiz (agar yo‘q bo‘lsa)
+cur.execute("""
+ALTER TABLE history
+ADD COLUMN IF NOT EXISTS category TEXT
+""")
+
+conn.commit()
+
+
 conn.commit()
 
 
