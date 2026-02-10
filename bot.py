@@ -5,7 +5,9 @@ import psycopg2
 import os
 import matplotlib.pyplot as plt
 import logging
+
 logging.basicConfig(level=logging.INFO)
+
 TOKEN = os.getenv("TOKEN")
 GROQ_KEY = os.getenv("GROQ_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -29,7 +31,7 @@ CREATE TABLE IF NOT EXISTS history (
 );
 """)
 
-# yangi category column qo‘shamiz (agar yo‘q bo‘lsa)
+# category column qo‘shamiz agar yo‘q bo‘lsa
 cur.execute("""
 ALTER TABLE history
 ADD COLUMN IF NOT EXISTS category TEXT
@@ -37,13 +39,7 @@ ADD COLUMN IF NOT EXISTS category TEXT
 
 conn.commit()
 
-
-conn.commit()
-
-
 client = Groq(api_key=GROQ_KEY)
-
-
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -58,7 +54,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global conn, cur
 
-    # reconnect agar DB yopilgan bo‘lsa
+    # reconnect DB agar yopilgan bo‘lsa
     if conn.closed:
         conn = psycopg2.connect(DATABASE_URL, sslmode="require")
         cur = conn.cursor()
@@ -76,8 +72,14 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Balans: {bal}")
 
 
-
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global conn, cur
+
+    # reconnect qo‘shildi
+    if conn.closed:
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+        cur = conn.cursor()
+
     user = str(update.effective_user.id)
 
     cur.execute("""
@@ -104,11 +106,8 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ai_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "user", "content": "Salom AI"}
-            ],
+            messages=[{"role": "user", "content": "Salom AI"}],
             model="llama-3.1-8b-instant"
-
         )
 
         await update.message.reply_text(
@@ -118,9 +117,11 @@ async def ai_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Xato: {e}")
 
+
 async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global conn, cur
 
+    # reconnect qo‘shildi
     if conn.closed:
         conn = psycopg2.connect(DATABASE_URL, sslmode="require")
         cur = conn.cursor()
@@ -168,8 +169,14 @@ Give short and clear advice:
         await update.message.reply_text(f"AI error: {e}")
 
 
-
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global conn, cur
+
+    # reconnect qo‘shildi
+    if conn.closed:
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+        cur = conn.cursor()
+
     user = str(update.effective_user.id)
 
     cur.execute("""
@@ -204,6 +211,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user = str(update.effective_user.id)
 
+    # reconnect DB
     if conn.closed:
         conn = psycopg2.connect(DATABASE_URL, sslmode="require")
         cur = conn.cursor()
@@ -225,10 +233,12 @@ Text: "{line}"
 Rules:
 - Expense negative
 - Income positive
-- Return ONLY JSON
+- Comment short
+- Category one word (food, taxi, salary, shopping, etc.)
+- Return ONLY valid JSON
 
 Example:
-{{"amount": -20000, "comment": "taxi"}}
+{{"amount": -20000, "comment": "taxi", "category": "transport"}}
 """
 
             chat = client.chat.completions.create(
@@ -238,7 +248,7 @@ Example:
 
             import json, re
             ai_text = chat.choices[0].message.content.strip()
-            match = re.search(r"\{.*\}", ai_text)
+            match = re.search(r"\{[\s\S]*?\}", ai_text)
 
             if not match:
                 raise Exception("No JSON")
@@ -246,9 +256,11 @@ Example:
             result = json.loads(match.group().replace("'", '"'))
             amount = int(result["amount"])
             comment = result["comment"]
+            category = result.get("category", "other")
 
-        except:
-            # 🔥 Smart fallback
+        except Exception as e:
+            print("AI fallback:", e)
+
             import re
             nums = re.findall(r"\d+", line)
             if not nums:
@@ -261,11 +273,10 @@ Example:
             else:
                 amount = -abs(amount)
 
-            # comment extract
             words = line.split()
             comment = words[0] if words else "unknown"
+            category = "other"
 
-        # DB save
         cur.execute("""
         INSERT INTO users (user_id, balance)
         VALUES (%s, 0)
@@ -279,9 +290,9 @@ Example:
         """, (amount, user))
 
         cur.execute("""
-        INSERT INTO history (user_id, amount, comment)
-        VALUES (%s, %s, %s)
-        """, (user, amount, comment))
+        INSERT INTO history (user_id, amount, comment, category)
+        VALUES (%s, %s, %s, %s)
+        """, (user, amount, comment, category))
 
         total += amount
 
@@ -295,16 +306,6 @@ Example:
     )
 
 
-
-
-
-
-
-
-
-
-
-
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
@@ -315,4 +316,5 @@ app.add_handler(CommandHandler("analyze", analyze))
 app.add_handler(CommandHandler("ai", ai_test))
 app.add_handler(MessageHandler(filters.TEXT, handle))
 
-app.run_polling()   
+app.run_polling()
+   
