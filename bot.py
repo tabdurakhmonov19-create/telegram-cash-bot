@@ -195,13 +195,12 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user = str(update.effective_user.id)
 
-    # DB reconnect
     if conn.closed:
         conn = psycopg2.connect(DATABASE_URL, sslmode="require")
         cur = conn.cursor()
 
     lines = text.split("\n")
-    total_added = 0
+    total = 0
 
     for line in lines:
         line = line.strip()
@@ -217,7 +216,6 @@ Text: "{line}"
 Rules:
 - Expense negative
 - Income positive
-- Comment short
 - Return ONLY JSON
 
 Example:
@@ -229,32 +227,34 @@ Example:
                 model="llama-3.1-8b-instant"
             )
 
-            ai_text = chat.choices[0].message.content.strip()
-
             import json, re
+            ai_text = chat.choices[0].message.content.strip()
             match = re.search(r"\{.*\}", ai_text)
 
-            if match:
-                result = json.loads(match.group().replace("'", '"'))
-                amount = int(result["amount"])
-                comment = result["comment"]
-            else:
-                raise Exception("AI JSON yo‘q")
+            if not match:
+                raise Exception("No JSON")
+
+            result = json.loads(match.group().replace("'", '"'))
+            amount = int(result["amount"])
+            comment = result["comment"]
 
         except:
-            # fallback regex
+            # 🔥 Smart fallback
             import re
             nums = re.findall(r"\d+", line)
             if not nums:
                 continue
 
             amount = int(nums[0])
-            if "oldim" in line or "maosh" in line:
+
+            if any(x in line.lower() for x in ["oldim", "maosh", "keldi"]):
                 amount = abs(amount)
             else:
                 amount = -abs(amount)
 
-            comment = line[:20]
+            # comment extract
+            words = line.split()
+            comment = words[0] if words else "unknown"
 
         # DB save
         cur.execute("""
@@ -274,7 +274,7 @@ Example:
         VALUES (%s, %s, %s)
         """, (user, amount, comment))
 
-        total_added += amount
+        total += amount
 
     conn.commit()
 
@@ -282,8 +282,9 @@ Example:
     bal = cur.fetchone()[0]
 
     await update.message.reply_text(
-        f"Jami qo‘shildi: {total_added}\nBalans: {bal}"
+        f"Jami qo‘shildi: {total}\nBalans: {bal}"
     )
+
 
 
 
