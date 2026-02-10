@@ -195,72 +195,86 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user = str(update.effective_user.id)
 
-    # reconnect DB
+    # DB reconnect
     if conn.closed:
         conn = psycopg2.connect(DATABASE_URL, sslmode="require")
         cur = conn.cursor()
 
-    try:
-        prompt = f"""
+    lines = text.split("\n")
+    total_added = 0
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        try:
+            prompt = f"""
 Extract money transaction from Uzbek text.
 
-Text: "{text}"
+Text: "{line}"
 
 Rules:
 - Expense negative
 - Income positive
 - Comment short
-- Return ONLY valid JSON
+- Return ONLY JSON
 
 Example:
 {{"amount": -20000, "comment": "taxi"}}
 """
 
-        chat = client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="llama-3.1-8b-instant"
-        )
+            chat = client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model="llama-3.1-8b-instant"
+            )
 
-        ai_text = chat.choices[0].message.content.strip()
+            ai_text = chat.choices[0].message.content.strip()
 
-        import json, re
-        match = re.search(r"\{[\s\S]*\}", ai_text)
+            import json, re
+            match = re.search(r"\{.*\}", ai_text)
 
-        if not match:
-            raise Exception("JSON not found")
+            if match:
+                result = json.loads(match.group().replace("'", '"'))
+                amount = int(result["amount"])
+                comment = result["comment"]
+            else:
+                raise Exception("AI JSON yo‘q")
 
-        json_text = match.group().replace("'", '"')
-        result = json.loads(json_text)
+        except:
+            # fallback regex
+            import re
+            nums = re.findall(r"\d+", line)
+            if not nums:
+                continue
 
-        amount = int(result["amount"])
-        comment = result["comment"]
+            amount = int(nums[0])
+            if "oldim" in line or "maosh" in line:
+                amount = abs(amount)
+            else:
+                amount = -abs(amount)
 
-    except Exception as e:
-        print("AI parse error:", e)
-        await update.message.reply_text(
-            "Tushunmadim 🤔\nMasalan:\n👉 Taxi uchun 20000 ketdi"
-        )
-        return
+            comment = line[:20]
 
-    # user create
-    cur.execute("""
-    INSERT INTO users (user_id, balance)
-    VALUES (%s, 0)
-    ON CONFLICT (user_id) DO NOTHING
-    """, (user,))
+        # DB save
+        cur.execute("""
+        INSERT INTO users (user_id, balance)
+        VALUES (%s, 0)
+        ON CONFLICT (user_id) DO NOTHING
+        """, (user,))
 
-    # balance update
-    cur.execute("""
-    UPDATE users
-    SET balance = balance + %s
-    WHERE user_id=%s
-    """, (amount, user))
+        cur.execute("""
+        UPDATE users
+        SET balance = balance + %s
+        WHERE user_id=%s
+        """, (amount, user))
 
-    # history save
-    cur.execute("""
-    INSERT INTO history (user_id, amount, comment)
-    VALUES (%s, %s, %s)
-    """, (user, amount, comment))
+        cur.execute("""
+        INSERT INTO history (user_id, amount, comment)
+        VALUES (%s, %s, %s)
+        """, (user, amount, comment))
+
+        total_added += amount
 
     conn.commit()
 
@@ -268,10 +282,9 @@ Example:
     bal = cur.fetchone()[0]
 
     await update.message.reply_text(
-        f"Qo‘shildi: {amount}\n"
-        f"Izoh: {comment}\n"
-        f"Balans: {bal}"
+        f"Jami qo‘shildi: {total_added}\nBalans: {bal}"
     )
+
 
 
 
