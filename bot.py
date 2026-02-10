@@ -59,10 +59,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = str(update.effective_user.id)
-    data = load_data()
 
-    bal = data.get(user, {}).get("balance", 0)
+    cur.execute("SELECT balance FROM users WHERE user_id=%s", (user,))
+    row = cur.fetchone()
+
+    if row:
+        bal = row[0]
+    else:
+        bal = 0
+
     await update.message.reply_text(f"Balans: {bal}")
+
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = str(update.effective_user.id)
