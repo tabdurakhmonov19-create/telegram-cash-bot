@@ -1,10 +1,11 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from groq import Groq
-import json
+import psycopg2
 import os
 import matplotlib.pyplot as plt
-import psycopg2
+import logging
+logging.basicConfig(level=logging.INFO)
 TOKEN = os.getenv("TOKEN")
 GROQ_KEY = os.getenv("GROQ_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -36,18 +37,6 @@ client = Groq(api_key=GROQ_KEY)
 
 
 
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    return {}
-
-
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f)
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Cash bot tayyor 💰\n"
@@ -58,6 +47,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global conn, cur
+
+    # reconnect agar DB yopilgan bo‘lsa
+    if conn.closed:
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+        cur = conn.cursor()
+
     user = str(update.effective_user.id)
 
     cur.execute("SELECT balance FROM users WHERE user_id=%s", (user,))
@@ -71,20 +67,30 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Balans: {bal}")
 
 
+
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = str(update.effective_user.id)
-    data = load_data()
 
-    if user not in data or "history" not in data[user]:
+    cur.execute("""
+        SELECT amount, comment
+        FROM history
+        WHERE user_id=%s
+        ORDER BY id DESC
+        LIMIT 10
+    """, (user,))
+
+    rows = cur.fetchall()
+
+    if not rows:
         await update.message.reply_text("History yo‘q")
         return
 
     text = "Oxirgi harajatlar:\n"
-
-    for item in data[user]["history"][-10:]:
-        text += f"{item['amount']} — {item['comment']}\n"
+    for amount, comment in rows:
+        text += f"{amount} — {comment}\n"
 
     await update.message.reply_text(text)
+
 
 async def ai_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -105,15 +111,22 @@ async def ai_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = str(update.effective_user.id)
-    data = load_data()
 
-    if user not in data or "history" not in data[user]:
+    cur.execute("""
+        SELECT amount, comment
+        FROM history
+        WHERE user_id=%s
+    """, (user,))
+
+    rows = cur.fetchall()
+
+    if not rows:
         await update.message.reply_text("Analiz uchun data yo‘q.")
         return
 
     history_text = ""
-    for item in data[user]["history"]:
-        history_text += f"{item['amount']} — {item['comment']}\n"
+    for amount, comment in rows:
+        history_text += f"{amount} — {comment}\n"
 
     prompt = f"""
 You are a professional financial advisor.
@@ -122,13 +135,10 @@ Analyze these financial transactions:
 {history_text}
 
 Give short and clear advice:
-
 1. Where most money is spent
 2. How to save money
 3. Budget recommendations
-4. Warn if there are unnecessary expenses
-
-Write simple, practical advice.
+4. Warn unnecessary expenses
 """
 
     try:
@@ -144,23 +154,24 @@ Write simple, practical advice.
     except Exception as e:
         await update.message.reply_text(f"Xato: {e}")
 
+
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = str(update.effective_user.id)
-    data = load_data()
 
-    if user not in data or "history" not in data[user]:
+    cur.execute("""
+        SELECT comment, SUM(ABS(amount))
+        FROM history
+        WHERE user_id=%s
+        GROUP BY comment
+    """, (user,))
+
+    rows = cur.fetchall()
+
+    if not rows:
         await update.message.reply_text("Report uchun data yo‘q.")
         return
 
-    categories = {}
-    for item in data[user]["history"]:
-        cat = item["comment"]
-        amount = abs(item["amount"])
-
-        if cat in categories:
-            categories[cat] += amount
-        else:
-            categories[cat] = amount
+    categories = {row[0]: row[1] for row in rows}
 
     plt.figure()
     plt.bar(categories.keys(), categories.values())
@@ -169,7 +180,12 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plt.savefig("report.png")
     plt.close()
 
-    await update.message.reply_photo(photo=open("report.png", "rb"))
+    with open("report.png", "rb") as f:
+        await update.message.reply_photo(photo=f)
+
+
+
+
 
 
 
@@ -178,32 +194,58 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global conn, cur
+
     text = update.message.text
+
+    # reconnect agar DB yopilgan bo‘lsa
+    if conn.closed:
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+        cur = conn.cursor()
+
+    # faqat + yoki - yozuv
+    if not (text.startswith("+") or text.startswith("-")):
+        return
+
     user = str(update.effective_user.id)
 
-    data = load_data()
+    parts = text.split(" ", 1)
+    amount = int(parts[0])
+    comment = parts[1] if len(parts) > 1 else "izoh yo‘q"
 
-    if user not in data:
-        data[user] = {"balance": 0, "history": []}
+    # user yaratish
+    cur.execute("""
+    INSERT INTO users (user_id, balance)
+    VALUES (%s, 0)
+    ON CONFLICT (user_id) DO NOTHING
+    """, (user,))
 
-    if text.startswith("+") or text.startswith("-"):
-        parts = text.split(" ", 1)
-        amount = int(parts[0])
-        comment = parts[1] if len(parts) > 1 else "izoh yo‘q"
+    # balans update
+    cur.execute("""
+    UPDATE users
+    SET balance = balance + %s
+    WHERE user_id=%s
+    """, (amount, user))
 
-        data[user]["balance"] += amount
-        data[user]["history"].append({
-            "amount": amount,
-            "comment": comment
-        })
+    # history yozish
+    cur.execute("""
+    INSERT INTO history (user_id, amount, comment)
+    VALUES (%s, %s, %s)
+    """, (user, amount, comment))
 
-        save_data(data)
+    conn.commit()
 
-        await update.message.reply_text(
-            f"Qo‘shildi: {amount}\n"
-            f"Izoh: {comment}\n"
-            f"Balans: {data[user]['balance']}"
-        )
+    # yangi balans
+    cur.execute("SELECT balance FROM users WHERE user_id=%s", (user,))
+    bal = cur.fetchone()[0]
+
+    await update.message.reply_text(
+        f"Qo‘shildi: {amount}\n"
+        f"Izoh: {comment}\n"
+        f"Balans: {bal}"
+    )
+
+
 
 
 
