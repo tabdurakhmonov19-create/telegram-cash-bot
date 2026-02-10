@@ -197,45 +197,63 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global conn, cur
 
     text = update.message.text
+    user = str(update.effective_user.id)
 
-    # reconnect agar DB yopilgan bo‘lsa
+    # DB reconnect
     if conn.closed:
         conn = psycopg2.connect(DATABASE_URL, sslmode="require")
         cur = conn.cursor()
 
-    lines = text.split("\n")
-    user = str(update.effective_user.id)
+    # AI parsing
+    try:
+        prompt = f"""
+Extract financial transaction from this text.
 
-    total_added = 0
+Text: "{text}"
 
-    for line in lines:
-        line = line.strip()
+Rules:
+- Income positive number
+- Expense negative number
+- Short comment (1-2 words)
 
-        if not (line.startswith("+") or line.startswith("-")):
-            continue
+Return ONLY JSON:
+{{"amount": number, "comment": "text"}}
+"""
 
-        parts = line.split(" ", 1)
-        amount = int(parts[0])
-        comment = parts[1] if len(parts) > 1 else "izoh yo‘q"
+        chat = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.1-8b-instant"
+        )
 
-        cur.execute("""
-        INSERT INTO users (user_id, balance)
-        VALUES (%s, 0)
-        ON CONFLICT (user_id) DO NOTHING
-        """, (user,))
+        import json
+        result = json.loads(chat.choices[0].message.content)
 
-        cur.execute("""
-        UPDATE users
-        SET balance = balance + %s
-        WHERE user_id=%s
-        """, (amount, user))
+        amount = int(result["amount"])
+        comment = result["comment"]
 
-        cur.execute("""
-        INSERT INTO history (user_id, amount, comment)
-        VALUES (%s, %s, %s)
-        """, (user, amount, comment))
+    except Exception as e:
+        await update.message.reply_text("Tushunmadim 🤔")
+        return
 
-        total_added += amount
+    # user create
+    cur.execute("""
+    INSERT INTO users (user_id, balance)
+    VALUES (%s, 0)
+    ON CONFLICT (user_id) DO NOTHING
+    """, (user,))
+
+    # balance update
+    cur.execute("""
+    UPDATE users
+    SET balance = balance + %s
+    WHERE user_id=%s
+    """, (amount, user))
+
+    # history insert
+    cur.execute("""
+    INSERT INTO history (user_id, amount, comment)
+    VALUES (%s, %s, %s)
+    """, (user, amount, comment))
 
     conn.commit()
 
@@ -243,8 +261,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bal = cur.fetchone()[0]
 
     await update.message.reply_text(
-        f"Qo‘shildi jami: {total_added}\nBalans: {bal}"
+        f"Qo‘shildi: {amount}\n"
+        f"Izoh: {comment}\n"
+        f"Balans: {bal}"
     )
+
 
 
 
