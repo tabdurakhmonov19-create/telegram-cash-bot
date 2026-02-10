@@ -205,40 +205,53 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cur = conn.cursor()
 
     try:
-        prompt = f"""
-Extract money transaction from text.
+    prompt = f"""
+Extract money transaction from Uzbek text.
 
 Text: "{text}"
 
 Rules:
-- Expense = negative number
-- Income = positive number
-- Comment short (1-2 words)
+- Expense negative
+- Income positive
+- Comment short
+- Return ONLY valid JSON
 
-Return ONLY JSON:
-{{"amount": number, "comment": "text"}}
+Example:
+{{"amount": -20000, "comment": "taxi"}}
 """
 
-        chat = client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="llama-3.1-8b-instant"
-        )
+    chat = client.chat.completions.create(
+        messages=[{"role": "user", "content": prompt}],
+        model="llama-3.1-8b-instant"
+    )
 
-        ai_text = chat.choices[0].message.content.strip()
+    ai_text = chat.choices[0].message.content.strip()
 
-        # JSONni xavfsiz parse qilish
-        import json, re
-        json_text = re.search(r"\{.*\}", ai_text, re.S).group()
+    import json, re
 
-        result = json.loads(json_text)
+    # JSONni text ichidan topamiz
+    match = re.search(r"\{[\s\S]*\}", ai_text)
 
-        amount = int(result["amount"])
-        comment = result["comment"]
+    if not match:
+        raise Exception("JSON not found")
 
-    except Exception as e:
-        print("AI error:", e)
-        await update.message.reply_text("Tushunmadim 🤔 Qayta yozing.")
-        return
+    json_text = match.group()
+
+    # single quote bo‘lsa replace qilamiz
+    json_text = json_text.replace("'", '"')
+
+    result = json.loads(json_text)
+
+    amount = int(result["amount"])
+    comment = result["comment"]
+
+except Exception as e:
+    print("AI parse error:", e)
+    await update.message.reply_text(
+        "Tushunmadim 🤔\nMasalan:\n👉 Taxi uchun 20000 ketdi"
+    )
+    return
+
 
     # user create
     cur.execute("""
