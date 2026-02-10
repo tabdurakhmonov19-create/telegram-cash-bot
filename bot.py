@@ -293,7 +293,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user = str(update.effective_user.id)
 
-    # reconnect DB
     if conn.closed:
         conn = psycopg2.connect(DATABASE_URL, sslmode="require")
         cur = conn.cursor()
@@ -316,7 +315,7 @@ Rules:
 - Expense negative
 - Income positive
 - Comment short
-- Category one word (food, taxi, salary, shopping, etc.)
+- Category one word
 - Return ONLY valid JSON
 
 Example:
@@ -359,51 +358,53 @@ Example:
             comment = words[0] if words else "unknown"
             category = "other"
 
+        # USER CREATE
         cur.execute("""
         INSERT INTO users (user_id, balance)
         VALUES (%s, 0)
         ON CONFLICT (user_id) DO NOTHING
         """, (user,))
 
+        # BALANCE UPDATE
         cur.execute("""
         UPDATE users
         SET balance = balance + %s
         WHERE user_id=%s
         """, (amount, user))
 
+        # HISTORY SAVE
         cur.execute("""
         INSERT INTO history (user_id, amount, comment, category)
         VALUES (%s, %s, %s, %s)
         """, (user, amount, comment, category))
 
+        # ⭐ BUDGET ALERT
+        cur.execute("""
+        SELECT amount FROM budgets
+        WHERE user_id=%s AND category=%s
+        """, (user, category))
+
+        row = cur.fetchone()
+
+        if row:
+            limit_amount = row[0]
+
+            cur.execute("""
+            SELECT SUM(ABS(amount))
+            FROM history
+            WHERE user_id=%s AND category=%s
+            """, (user, category))
+
+            spent = cur.fetchone()[0] or 0
+
+            if spent > limit_amount:
+                await update.message.reply_text(
+                    f"⚠️ {category} budget oshdi!\n"
+                    f"Limit: {limit_amount}\n"
+                    f"Sarflandi: {spent}"
+                )
+
         total += amount
-
-        # budget check
-cur.execute("""
-SELECT amount FROM budgets
-WHERE user_id=%s AND category=%s
-""", (user, category))
-
-row = cur.fetchone()
-
-if row:
-    limit_amount = row[0]
-
-    cur.execute("""
-    SELECT SUM(ABS(amount))
-    FROM history
-    WHERE user_id=%s AND category=%s
-    """, (user, category))
-
-    spent = cur.fetchone()[0] or 0
-
-    if spent > limit_amount:
-        await update.message.reply_text(
-            f"⚠️ {category} budget oshdi!\n"
-            f"Limit: {limit_amount}\n"
-            f"Sarflandi: {spent}"
-        )
-
 
     conn.commit()
 
@@ -413,6 +414,7 @@ if row:
     await update.message.reply_text(
         f"Jami qo‘shildi: {total}\nBalans: {bal}"
     )
+
 
 
 app = ApplicationBuilder().token(TOKEN).build()
