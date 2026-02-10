@@ -203,9 +203,32 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = psycopg2.connect(DATABASE_URL, sslmode="require")
         cur = conn.cursor()
 
-    # faqat + yoki - yozuv
+    # agar oddiy format bo‘lmasa AI parse qiladi
     if not (text.startswith("+") or text.startswith("-")):
-        return
+        try:
+            ai = client.chat.completions.create(
+                messages=[{
+                    "role": "user",
+                    "content": f"""
+Extract financial transaction from this text:
+
+{text}
+
+Return ONLY:
+amount comment
+
+Example:
+-20000 taxi
++3000000 salary
+"""
+                }],
+                model="llama-3.1-8b-instant"
+            )
+
+            text = ai.choices[0].message.content.strip()
+
+        except Exception:
+            return
 
     user = str(update.effective_user.id)
 
@@ -244,6 +267,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Izoh: {comment}\n"
         f"Balans: {bal}"
     )
+
 
 
 
