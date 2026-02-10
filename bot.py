@@ -110,6 +110,12 @@ async def ai_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Xato: {e}")
 
 async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global conn, cur
+
+    if conn.closed:
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+        cur = conn.cursor()
+
     user = str(update.effective_user.id)
 
     cur.execute("""
@@ -117,7 +123,6 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
         FROM history
         WHERE user_id=%s
     """, (user,))
-
     rows = cur.fetchall()
 
     if not rows:
@@ -147,12 +152,12 @@ Give short and clear advice:
             model="llama-3.1-8b-instant"
         )
 
-        await update.message.reply_text(
-            chat_completion.choices[0].message.content
-        )
+        answer = chat_completion.choices[0].message.content
+        await update.message.reply_text(answer)
 
     except Exception as e:
-        await update.message.reply_text(f"Xato: {e}")
+        await update.message.reply_text(f"AI error: {e}")
+
 
 
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -184,15 +189,6 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_photo(photo=f)
 
 
-
-
-
-
-
-
-
-
-
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global conn, cur
 
@@ -205,7 +201,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cur = conn.cursor()
 
     try:
-    prompt = f"""
+        prompt = f"""
 Extract money transaction from Uzbek text.
 
 Text: "{text}"
@@ -220,38 +216,31 @@ Example:
 {{"amount": -20000, "comment": "taxi"}}
 """
 
-    chat = client.chat.completions.create(
-        messages=[{"role": "user", "content": prompt}],
-        model="llama-3.1-8b-instant"
-    )
+        chat = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.1-8b-instant"
+        )
 
-    ai_text = chat.choices[0].message.content.strip()
+        ai_text = chat.choices[0].message.content.strip()
 
-    import json, re
+        import json, re
+        match = re.search(r"\{[\s\S]*\}", ai_text)
 
-    # JSONni text ichidan topamiz
-    match = re.search(r"\{[\s\S]*\}", ai_text)
+        if not match:
+            raise Exception("JSON not found")
 
-    if not match:
-        raise Exception("JSON not found")
+        json_text = match.group().replace("'", '"')
+        result = json.loads(json_text)
 
-    json_text = match.group()
+        amount = int(result["amount"])
+        comment = result["comment"]
 
-    # single quote bo‘lsa replace qilamiz
-    json_text = json_text.replace("'", '"')
-
-    result = json.loads(json_text)
-
-    amount = int(result["amount"])
-    comment = result["comment"]
-
-except Exception as e:
-    print("AI parse error:", e)
-    await update.message.reply_text(
-        "Tushunmadim 🤔\nMasalan:\n👉 Taxi uchun 20000 ketdi"
-    )
-    return
-
+    except Exception as e:
+        print("AI parse error:", e)
+        await update.message.reply_text(
+            "Tushunmadim 🤔\nMasalan:\n👉 Taxi uchun 20000 ketdi"
+        )
+        return
 
     # user create
     cur.execute("""
@@ -283,6 +272,7 @@ except Exception as e:
         f"Izoh: {comment}\n"
         f"Balans: {bal}"
     )
+
 
 
 
