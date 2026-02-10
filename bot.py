@@ -4,9 +4,32 @@ from groq import Groq
 import json
 import os
 import matplotlib.pyplot as plt
+import psycopg2
 TOKEN = os.getenv("TOKEN")
-GROQ_KEY = os.getenv("GROQ_KEY")
-DATA_FILE = "data.json"
+GROQ_KEY = os.getenv("GROQ_API_KEY")
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+cur = conn.cursor()
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id TEXT PRIMARY KEY,
+    balance INTEGER DEFAULT 0
+);
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS history (
+    id SERIAL PRIMARY KEY,
+    user_id TEXT,
+    amount INTEGER,
+    comment TEXT
+);
+""")
+
+conn.commit()
+
 
 client = Groq(api_key=GROQ_KEY)
 
