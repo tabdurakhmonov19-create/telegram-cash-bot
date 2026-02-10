@@ -199,22 +199,21 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user = str(update.effective_user.id)
 
-    # DB reconnect
+    # reconnect DB
     if conn.closed:
         conn = psycopg2.connect(DATABASE_URL, sslmode="require")
         cur = conn.cursor()
 
-    # AI parsing
     try:
         prompt = f"""
-Extract financial transaction from this text.
+Extract money transaction from text.
 
 Text: "{text}"
 
 Rules:
-- Income positive number
-- Expense negative number
-- Short comment (1-2 words)
+- Expense = negative number
+- Income = positive number
+- Comment short (1-2 words)
 
 Return ONLY JSON:
 {{"amount": number, "comment": "text"}}
@@ -225,14 +224,20 @@ Return ONLY JSON:
             model="llama-3.1-8b-instant"
         )
 
-        import json
-        result = json.loads(chat.choices[0].message.content)
+        ai_text = chat.choices[0].message.content.strip()
+
+        # JSONni xavfsiz parse qilish
+        import json, re
+        json_text = re.search(r"\{.*\}", ai_text, re.S).group()
+
+        result = json.loads(json_text)
 
         amount = int(result["amount"])
         comment = result["comment"]
 
     except Exception as e:
-        await update.message.reply_text("Tushunmadim 🤔")
+        print("AI error:", e)
+        await update.message.reply_text("Tushunmadim 🤔 Qayta yozing.")
         return
 
     # user create
@@ -249,7 +254,7 @@ Return ONLY JSON:
     WHERE user_id=%s
     """, (amount, user))
 
-    # history insert
+    # history save
     cur.execute("""
     INSERT INTO history (user_id, amount, comment)
     VALUES (%s, %s, %s)
@@ -265,6 +270,7 @@ Return ONLY JSON:
         f"Izoh: {comment}\n"
         f"Balans: {bal}"
     )
+
 
 
 
