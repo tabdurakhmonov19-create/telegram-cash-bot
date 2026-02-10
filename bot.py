@@ -31,6 +31,15 @@ CREATE TABLE IF NOT EXISTS history (
 );
 """)
 
+cur.execute("""
+CREATE TABLE IF NOT EXISTS budgets (
+    user_id TEXT,
+    category TEXT,
+    amount INTEGER,
+    PRIMARY KEY (user_id, category)
+)
+""")
+
 # category column qo‘shamiz agar yo‘q bo‘lsa
 cur.execute("""
 ALTER TABLE history
@@ -243,6 +252,38 @@ async def month(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text)
 
+async def setbudget(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global conn, cur
+
+    if conn.closed:
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+        cur = conn.cursor()
+
+    try:
+        category = context.args[0]
+        amount = int(context.args[1])
+    except:
+        await update.message.reply_text(
+            "Format:\n/setbudget food 1000000"
+        )
+        return
+
+    user = str(update.effective_user.id)
+
+    cur.execute("""
+        INSERT INTO budgets (user_id, category, amount)
+        VALUES (%s,%s,%s)
+        ON CONFLICT (user_id, category)
+        DO UPDATE SET amount=%s
+    """, (user, category, amount, amount))
+
+    conn.commit()
+
+    await update.message.reply_text(
+        f"✅ Budget set:\n{category} → {amount}"
+    )
+
+
 
 
 
@@ -337,6 +378,33 @@ Example:
 
         total += amount
 
+        # budget check
+cur.execute("""
+SELECT amount FROM budgets
+WHERE user_id=%s AND category=%s
+""", (user, category))
+
+row = cur.fetchone()
+
+if row:
+    limit_amount = row[0]
+
+    cur.execute("""
+    SELECT SUM(ABS(amount))
+    FROM history
+    WHERE user_id=%s AND category=%s
+    """, (user, category))
+
+    spent = cur.fetchone()[0] or 0
+
+    if spent > limit_amount:
+        await update.message.reply_text(
+            f"⚠️ {category} budget oshdi!\n"
+            f"Limit: {limit_amount}\n"
+            f"Sarflandi: {spent}"
+        )
+
+
     conn.commit()
 
     cur.execute("SELECT balance FROM users WHERE user_id=%s", (user,))
@@ -356,6 +424,7 @@ app.add_handler(CommandHandler("report", report))
 app.add_handler(CommandHandler("analyze", analyze))
 app.add_handler(CommandHandler("month", month))
 app.add_handler(CommandHandler("ai", ai_test))
+app.add_handler(CommandHandler("setbudget", setbudget))
 app.add_handler(MessageHandler(filters.TEXT, handle))
 
 app.run_polling()
