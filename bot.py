@@ -37,6 +37,12 @@ ALTER TABLE history
 ADD COLUMN IF NOT EXISTS category TEXT
 """)
 
+cur.execute("""
+ALTER TABLE history
+ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+""")
+
+
 conn.commit()
 
 client = Groq(api_key=GROQ_KEY)
@@ -204,6 +210,41 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with open("report.png", "rb") as f:
         await update.message.reply_photo(photo=f)
 
+async def month(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global conn, cur
+
+    if conn.closed:
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+        cur = conn.cursor()
+
+    user = str(update.effective_user.id)
+
+    cur.execute("""
+        SELECT category, SUM(ABS(amount))
+        FROM history
+        WHERE user_id=%s
+        GROUP BY category
+    """, (user,))
+
+    rows = cur.fetchall()
+
+    if not rows:
+        await update.message.reply_text("Harajat yo‘q")
+        return
+
+    text = "📊 Harajatlar:\n\n"
+    total = 0
+
+    for cat, amount in rows:
+        text += f"{cat}: {amount}\n"
+        total += amount
+
+    text += f"\n💰 Jami: {total}"
+
+    await update.message.reply_text(text)
+
+
+
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global conn, cur
@@ -313,6 +354,7 @@ app.add_handler(CommandHandler("balance", balance))
 app.add_handler(CommandHandler("history", history))
 app.add_handler(CommandHandler("report", report))
 app.add_handler(CommandHandler("analyze", analyze))
+app.add_handler(CommandHandler("month", month))
 app.add_handler(CommandHandler("ai", ai_test))
 app.add_handler(MessageHandler(filters.TEXT, handle))
 
