@@ -8,6 +8,9 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+
 def money(x):
     return f"{x:,} so'm"
 
@@ -54,6 +57,17 @@ cur.execute("""
 ALTER TABLE history
 ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 """)
+cur.execute("""
+CREATE TABLE IF NOT EXISTS history_archive (
+    id SERIAL PRIMARY KEY,
+    user_id TEXT,
+    amount INTEGER,
+    comment TEXT,
+    category TEXT,
+    created_at TIMESTAMP
+)
+""")
+
 
 conn.commit()
 
@@ -114,6 +128,123 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     await update.message.reply_text(text)
+
+async def auto_month_report():
+    global conn, cur
+
+    if conn.closed:
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+        cur = conn.cursor()
+
+    cur.execute("""
+    SELECT user_id, category, SUM(ABS(amount))
+    FROM history
+    GROUP BY user_id, category
+    """)
+
+    rows = cur.fetchall()
+
+    if not rows:
+        returnasync def auto_month_report():
+    global conn, cur
+
+    if conn.closed:
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+        cur = conn.cursor()
+
+    cur.execute("""
+    SELECT user_id, category, SUM(ABS(amount))
+    FROM history
+    GROUP BY user_id, category
+    """)
+
+    rows = cur.fetchall()
+
+    if not rows:
+        return
+
+    from collections import defaultdict
+    data = defaultdict(list)
+
+    for user, cat, amount in rows:
+        data[user].append((cat, amount))
+
+    for user, items in data.items():
+        text = "📊 Oylik hisobot:\n\n"
+        total = 0
+
+        for cat, amount in items:
+            text += f"{name}: {money(amount)}\n"
+            total += amount
+
+        text += f"\n💰 Jami: {money(total)}"
+
+        try:
+            await app.bot.send_message(chat_id=user, text=text)
+        except:
+            pass
+
+
+
+    from collections import defaultdict
+    data = defaultdict(list)
+
+    for user, cat, amount in rows:
+        data[user].append((cat, amount))
+
+    for user, items in data.items():
+        text = "📊 Oylik hisobot:\n\n"
+        total = 0
+
+        for cat, amount in items:
+            text += f"{name}: {money(amount)}\n"
+            total += amount
+
+        text += f"\n💰 Jami: {money(total)}"
+
+        try:
+            await app.bot.send_message(chat_id=user, text=text)
+        except:
+            pass
+
+async def monthly_reset():
+    global conn, cur
+
+    if conn.closed:
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+        cur = conn.cursor()
+
+    # eski transactionlarni o‘chirish
+    cur.execute("DELETE FROM history")
+
+    # balansni 0 qilish
+    cur.execute("UPDATE users SET balance = 0")
+
+    conn.commit()
+
+    print("Monthly reset done")
+
+async def monthly_reset():
+    global conn, cur
+
+    if conn.closed:
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+        cur = conn.cursor()
+
+    # history → archive ko‘chiramiz
+    cur.execute("""
+    INSERT INTO history_archive
+    SELECT * FROM history
+    """)
+
+    # asosiy history tozalaymiz
+    cur.execute("DELETE FROM history")
+
+    # balans reset
+    cur.execute("UPDATE users SET balance = 0")
+
+    conn.commit()
+    print("Monthly archive + reset done")
 
 
 async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -320,5 +451,33 @@ app.add_handler(CommandHandler("history", history))
 app.add_handler(CommandHandler("analyze", analyze))
 app.add_handler(CommandHandler("setbudget", setbudget))
 app.add_handler(MessageHandler(filters.TEXT, handle))
+
+scheduler = AsyncIOScheduler()
+
+scheduler.add_job(
+    auto_month_report,
+    "cron",
+    day=1,
+    hour=9
+)
+
+scheduler.start()
+
+scheduler.add_job(
+    monthly_reset,
+    "cron",
+    day=1,
+    hour=0,
+    minute=5
+)
+
+scheduler.add_job(
+    monthly_reset,
+    "cron",
+    day=1,
+    hour=0,
+    minute=5
+)
+
 
 app.run_polling()
