@@ -8,6 +8,11 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 
+def money(x):
+    return f"{x:,} so'm"
+
+
+
 TOKEN = os.getenv("TOKEN")
 GROQ_KEY = os.getenv("GROQ_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -76,7 +81,8 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     row = cur.fetchone()
 
     bal = row[0] if row else 0
-    await update.message.reply_text(f"Balans: {bal}")
+    await update.message.reply_text(f"Balans: {money(bal)}"
+)
 
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -103,7 +109,9 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = "Oxirgi harajatlar:\n"
     for amount, comment in rows:
-        text += f"{amount} — {comment}\n"
+        text += f"{money(amount)} — {comment}\n"
+
+
 
     await update.message.reply_text(text)
 
@@ -173,7 +181,10 @@ async def setbudget(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn.commit()
 
-    await update.message.reply_text(f"✅ Budget set:\n{category} → {amount}")
+    await update.message.reply_text(
+    f"✅ Budget set:\n{category} → {money(amount)}"
+)
+
 
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -235,7 +246,8 @@ Return JSON:
             else:
                 amount = -abs(amount)
 
-            comment = line.split()[0]
+            comment = " ".join(line.split()[:2])
+
             category = "other"
 
         # USER
@@ -280,8 +292,9 @@ Return JSON:
             if spent > limit_amount:
                 await update.message.reply_text(
                     f"⚠️ {category} budget oshdi!\n"
-                    f"Limit: {limit_amount}\n"
-                    f"Sarflandi: {spent}"
+                    f"Limit: {limit_amount:,} so'm\n"
+                    f"Sarflandi: {spent:,} so'm"
+
                 )
 
         total += amount
@@ -292,8 +305,11 @@ Return JSON:
     bal = cur.fetchone()[0]
 
     await update.message.reply_text(
-        f"Jami qo‘shildi: {total}\nBalans: {bal}"
-    )
+    f"Jami qo‘shildi: {money(total)}\n"
+    f"Balans: {money(bal)}"
+)
+
+
 
 
 app = ApplicationBuilder().token(TOKEN).build()
