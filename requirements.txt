@@ -1,4 +1,4 @@
-python-telegram-bot
-groq
-matplotlib
+python-telegram-bot␊
+groq␊
 psycopg2-binary
+APScheduler
