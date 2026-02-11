@@ -145,22 +145,6 @@ async def auto_month_report():
     rows = cur.fetchall()
 
     if not rows:
-        returnasync def auto_month_report():
-    global conn, cur
-
-    if conn.closed:
-        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-        cur = conn.cursor()
-
-    cur.execute("""
-    SELECT user_id, category, SUM(ABS(amount))
-    FROM history
-    GROUP BY user_id, category
-    """)
-
-    rows = cur.fetchall()
-
-    if not rows:
         return
 
     from collections import defaultdict
@@ -174,55 +158,15 @@ async def auto_month_report():
         total = 0
 
         for cat, amount in items:
-            text += f"{name}: {money(amount)}\n"
+            text += f"{cat}: {money(amount)}\n"
             total += amount
 
         text += f"\n💰 Jami: {money(total)}"
 
         try:
             await app.bot.send_message(chat_id=user, text=text)
-        except:
+        except Exception:
             pass
-
-
-
-    from collections import defaultdict
-    data = defaultdict(list)
-
-    for user, cat, amount in rows:
-        data[user].append((cat, amount))
-
-    for user, items in data.items():
-        text = "📊 Oylik hisobot:\n\n"
-        total = 0
-
-        for cat, amount in items:
-            text += f"{name}: {money(amount)}\n"
-            total += amount
-
-        text += f"\n💰 Jami: {money(total)}"
-
-        try:
-            await app.bot.send_message(chat_id=user, text=text)
-        except:
-            pass
-
-async def monthly_reset():
-    global conn, cur
-
-    if conn.closed:
-        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-        cur = conn.cursor()
-
-    # eski transactionlarni o‘chirish
-    cur.execute("DELETE FROM history")
-
-    # balansni 0 qilish
-    cur.execute("UPDATE users SET balance = 0")
-
-    conn.commit()
-
-    print("Monthly reset done")
 
 async def monthly_reset():
     global conn, cur
@@ -314,6 +258,8 @@ async def setbudget(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
     f"✅ Budget set:\n{category} → {money(amount)}"
+/workspace/telegram-cash-bot$ /bin/bash -lc cd /workspace/telegram-cash-bot && sed -n '260,520p' bot.py
+f"✅ Budget set:\n{category} → {money(amount)}"
 )
 
 
@@ -462,14 +408,6 @@ scheduler.add_job(
 )
 
 scheduler.start()
-
-scheduler.add_job(
-    monthly_reset,
-    "cron",
-    day=1,
-    hour=0,
-    minute=5
-)
 
 scheduler.add_job(
     monthly_reset,
